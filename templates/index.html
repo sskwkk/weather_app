@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>雾霾探测系统</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
+            background: linear-gradient(135deg, #4A90E2 0%, #2C3E50 100%); 
+            min-height: 100vh;
+        }
+        .header {
+            padding: 30px 20px 20px;
+            text-align: center;
+            color: white;
+        }
+        .city-name {
+            font-size: 2.5rem;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+        .update-time {
+            font-size: 0.9rem;
+            opacity: 0.8;
+            margin-top: 8px;
+        }
+        .body {
+            padding: 0 15px 20px;
+        }
+        .weather-card {
+            background: rgba(255,255,255,0.95);
+            border-radius: 20px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        .weather-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .weather-text {
+            font-size: 1.3rem;
+            font-weight: bold;
+            color: #333;
+        }
+        .temp-text {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #E74C3C;
+        }
+        .aqi-display {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px 0 10px;
+        }
+        .aqi-item {
+            text-align: center;
+        }
+        .aqi-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #4A90E2;
+        }
+        .aqi-label {
+            color: #888;
+            font-size: 0.85rem;
+            margin-top: 5px;
+        }
+        .category-text {
+            text-align: center;
+            color: #666;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 30px;
+            margin-top: 10px;
+        }
+        .chart-container {
+            background: rgba(255,255,255,0.95);
+            border-radius: 20px;
+            padding: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        #chart {
+            width: 100%;
+            height: 250px;
+        }
+        .error-msg {
+            color: #ff6b6b;
+            text-align: center;
+            padding: 10px;
+            font-size: 0.9rem;
+        }
+        .refresh-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 50px;
+            height: 50px;
+            border-radius: 25px;
+            background: rgba(255,255,255,0.9);
+            border: none;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            font-size: 24px;
+            cursor: pointer;
+            color: #4A90E2;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="city-name" id="cityDisplay">定位中...</div>
+        <div class="update-time" id="timeDisplay"></div>
+    </div>
+    
+    <div class="body">
+        <div class="weather-card">
+            <div class="weather-row">
+                <span class="weather-text" id="weatherText">--</span>
+                <span class="temp-text" id="tempDisplay">--°C</span>
+            </div>
+            
+            <div class="aqi-display">
+                <div class="aqi-item">
+                    <div class="aqi-value" id="aqiDisplay">--</div>
+                    <div class="aqi-label">AQI</div>
+                </div>
+                <div class="aqi-item">
+                    <div class="aqi-value" id="pm25Display">--</div>
+                    <div class="aqi-label">PM2.5</div>
+                </div>
+                <div class="aqi-item">
+                    <div class="aqi-value" id="humidityDisplay">--%</div>
+                    <div class="aqi-label">湿度</div>
+                </div>
+            </div>
+            <div class="category-text" id="categoryDisplay">--</div>
+            <div class="error-msg" id="errorMsg"></div>
+        </div>
+        
+        <div class="chart-container">
+            <div id="chart"></div>
+        </div>
+    </div>
+    
+    <button class="refresh-btn" onclick="location.reload()">↻</button>
+    
+    <script>
+        // ========== 配置 ==========
+        const BASE_URL = 'https://beartangyin.pythonanywhere.com';
+        const BAIDU_AK = 'sbTa4RDf09Dq9neLwvEcVkwEBFMCWkY9';  // 百度地图AK
+        
+        // ========== 核心定位函数 ==========
+        async function getLocation() {
+            document.getElementById('cityDisplay').innerText = '定位中...';
+            document.getElementById('errorMsg').innerText = '';
+            
+            // 检查浏览器是否支持GPS定位
+            if (!navigator.geolocation) {
+                console.log('浏览器不支持GPS，使用IP定位');
+                fallbackToIPLocation();
+                return;
+            }
+            
+            // 尝试GPS定位
+            navigator.geolocation.getCurrentPosition(
+                async (position) => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+                    console.log(`GPS定位成功: ${lat}, ${lng}`);
+                    
+                    const city = await getCityFromBaidu(lat, lng);
+                    console.log(`解析城市: ${city}`);
+                    
+                    document.getElementById('cityDisplay').innerText = city;
+                    getWeather(city);
+                    getHistory(city);
+                    
+                    // 同时把城市保存到服务器
+                    saveCityToServer(city);
+                },
+                (error) => {
+                    console.error('GPS定位失败:', error.message);
+                    // 根据错误类型给出提示
+                    if (error.code === 1) {
+                        document.getElementById('errorMsg').innerText = '定位权限被拒绝，使用IP定位';
+                    } else if (error.code === 2) {
+                        document.getElementById('errorMsg').innerText = '定位超时，使用IP定位';
+                    } else {
+                        document.getElementById('errorMsg').innerText = '定位失败，使用IP定位';
+                    }
+                    fallbackToIPLocation();
+                },
+                {
+                    enableHighAccuracy: false,   // 城市级别不需要高精度
+                    timeout: 10000,               // 10秒超时
+                    maximumAge: 300000            // 缓存5分钟
+                }
+            );
+        }
+        
+        // 百度逆地理编码：经纬度 → 城市名（通过后端代理）
+        async function getCityFromBaidu(lat, lng) {
+            try {
+                const url = `${BASE_URL}/api/reverse_geo?lat=${lat}&lng=${lng}`;
+                const resp = await fetch(url);
+                const data = await resp.json();
+                
+                if (data.status === 0) {
+                    const addressComponent = data.result.addressComponent;
+                    // 优先使用城市名，如果没有则用区县名
+                    let city = addressComponent.city || addressComponent.district || '北京';
+                    // 去掉"市"字
+                    city = city.replace('市', '');
+                    return city;
+                } else {
+                    console.error('逆地理编码失败:', data);
+                    return '北京';
+                }
+            } catch (e) {
+                console.error('逆地理编码请求失败:', e);
+                return '北京';
+            }
+        }
+        
+        // IP定位回退（调用后端接口）
+        async function fallbackToIPLocation() {
+            try {
+                const resp = await fetch(`${BASE_URL}/api/location`);
+                const data = await resp.json();
+                console.log('IP定位返回:', data);
+                
+                const city = data.city || '北京';
+                document.getElementById('cityDisplay').innerText = city;
+                getWeather(city);
+                getHistory(city);
+            } catch (e) {
+                console.error('IP定位失败:', e);
+                // 最终回退
+                document.getElementById('cityDisplay').innerText = '北京';
+                getWeather('北京');
+                getHistory('北京');
+                document.getElementById('errorMsg').innerText = '定位失败，显示默认城市';
+            }
+        }
+        
+        // 保存城市到服务器
+        async function saveCityToServer(city) {
+            try {
+                await fetch(`${BASE_URL}/api/location?city=${encodeURIComponent(city)}`, {
+                    method: 'POST'
+                });
+            } catch (e) {
+                console.error('保存城市失败:', e);
+            }
+        }
+        
+        // ========== 天气数据获取 ==========
+        async function getWeather(city) {
+            try {
+                const resp = await fetch(`${BASE_URL}/api/weather?city=${encodeURIComponent(city)}`);
+                const result = await resp.json();
+                console.log('天气返回:', result);
+                
+                if (result.code !== 0) {
+                    document.getElementById('errorMsg').innerText = result.msg || '获取天气失败';
+                    return;
+                }
+                
+                const d = result.data;
+                if (!d) {
+                    document.getElementById('errorMsg').innerText = '数据格式错误';
+                    return;
+                }
+                
+                document.getElementById('weatherText').innerText = d.text || '--';
+                document.getElementById('tempDisplay').innerText = d.temp ? `${d.temp}°C` : '--°C';
+                document.getElementById('aqiDisplay').innerText = d.aqi || '--';
+                document.getElementById('pm25Display').innerText = d.pm2p5 || '--';
+                document.getElementById('humidityDisplay').innerText = d.humidity ? `${d.humidity}%` : '--%';
+                document.getElementById('categoryDisplay').innerText = d.category ? `空气质量：${d.category}` : '--';
+                document.getElementById('timeDisplay').innerText = `更新时间：${new Date().toLocaleString()}`;
+                document.getElementById('errorMsg').innerText = '';
+            } catch (e) {
+                console.error('获取天气失败', e);
+                document.getElementById('errorMsg').innerText = '网络请求失败: ' + e.message;
+            }
+        }
+        
+        async function getHistory(city) {
+            try {
+                const resp = await fetch(`${BASE_URL}/api/history?city=${encodeURIComponent(city)}`);
+                const result = await resp.json();
+                console.log('历史数据返回:', result);
+                const d = result.data;
+                
+                if (!d || !d.times || d.times.length === 0) {
+                    console.log('暂无历史数据');
+                    return;
+                }
+                
+                const chart = echarts.init(document.getElementById('chart'));
+                const option = {
+                    tooltip: { trigger: 'axis' },
+                    legend: { data: ['温度(°C)', '湿度(%)'], bottom: 0 },
+                    grid: { left: '10%', right: '10%', top: 20, bottom: 40 },
+                    xAxis: { type: 'category', data: d.times },
+                    yAxis: [
+                        { type: 'value', name: '温度°C' },
+                        { type: 'value', name: '湿度%' }
+                    ],
+                    series: [
+                        { name: '温度(°C)', type: 'line', data: d.temps, smooth: true, color: '#E74C3C' },
+                        { name: '湿度(%)', type: 'line', yAxisIndex: 1, data: d.humidities, smooth: true, color: '#3498DB' }
+                    ]
+                };
+                chart.setOption(option);
+            } catch (e) {
+                console.error('获取历史数据失败', e);
+            }
+        }
+        
+        // ========== 初始化 ==========
+        window.onload = function() {
+            getLocation();
+            // 每30分钟自动刷新一次
+            setInterval(getLocation, 1800000);
+        };
+    </script>
+</body>
+</html>
